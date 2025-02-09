@@ -1,0 +1,328 @@
+/***************************************************
+ * getApiKey
+ * -----------------------------------------------
+ * Returns a hardcoded OpenAI API key.
+ * IMPORTANT: For security reasons, do NOT hardcode 
+ * real keys in production. This is for demonstration 
+ * purposes only.
+ ***************************************************/
+function getApiKey() {
+  // Replace with your actual OpenAI API key
+  return "YOUR_OPENAI_API_KEY_HERE";
+}
+
+/***************************************************
+ * onOpen
+ * -----------------------------------------------
+ * This function runs automatically when the 
+ * spreadsheet is opened. It adds a custom menu to 
+ * the Google Sheets UI, allowing users to run the 
+ * "convertAnySheetToFormattedDoc" function.
+ ***************************************************/
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu("📝 Docs Formatter") // The name of the custom menu
+    .addItem("Format Sheet to Google Doc", "convertAnySheetToFormattedDoc") // Menu item linked to a function
+    .addToUi(); // Adds the menu to the UI
+}
+
+/***************************************************
+ * convertAnySheetToFormattedDoc
+ * -----------------------------------------------
+ * Main function that reads data from the active 
+ * sheet, creates a new Google Doc, formats the 
+ * Doc's layout, and processes the rows (batched) 
+ * with GPT for styled output.
+ ***************************************************/
+function convertAnySheetToFormattedDoc() {
+  // Get active spreadsheet and sheet
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spreadsheet.getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+
+  // Check if there is enough data (minimum 2 rows)
+  if (data.length < 2) {
+    SpreadsheetApp.getUi().alert("No data found! Ensure your sheet has a header row and some content.");
+    return;
+  }
+
+  // Create a new Google Doc using the spreadsheet name
+  var doc = DocumentApp.create(spreadsheet.getName() + " - Formatted Report");
+  var body = doc.getBody();
+
+  // Set document margins
+  body.setAttributes({
+    [DocumentApp.Attribute.MARGIN_BOTTOM]: 72,
+    [DocumentApp.Attribute.MARGIN_TOP]: 72,
+    [DocumentApp.Attribute.MARGIN_LEFT]: 72,
+    [DocumentApp.Attribute.MARGIN_RIGHT]: 72
+  });
+
+  // Add a title to the document
+  var title = body.appendParagraph(spreadsheet.getName() + " - Report");
+  title.setHeading(DocumentApp.ParagraphHeading.HEADING1)
+       .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+       .setAttributes({
+         [DocumentApp.Attribute.FOREGROUND_COLOR]: '#2c3e50',
+         [DocumentApp.Attribute.FONT_SIZE]: 24,
+         [DocumentApp.Attribute.BOLD]: true,
+         [DocumentApp.Attribute.SPACING_AFTER]: 20
+       });
+
+  // Add a timestamp below the title
+  var timestamp = body.appendParagraph("Generated on: " + new Date().toLocaleString());
+  timestamp.setAlignment(DocumentApp.HorizontalAlignment.RIGHT)
+           .setAttributes({
+             [DocumentApp.Attribute.FOREGROUND_COLOR]: '#7f8c8d',
+             [DocumentApp.Attribute.FONT_SIZE]: 10,
+             [DocumentApp.Attribute.ITALIC]: true,
+             [DocumentApp.Attribute.SPACING_AFTER]: 20
+           });
+
+  // Add a horizontal rule as a separator
+  body.appendHorizontalRule();
+
+  // Retrieve the hardcoded API key
+  var apiKey = getApiKey();
+  if (!apiKey) {
+    SpreadsheetApp.getUi().alert("Error: API Key is missing! Please add it to Script Properties or hardcode it properly.");
+    return;
+  }
+
+  // GPT model to use for formatting
+  var model = "gpt-4o-mini";
+
+  // First row of the sheet is used as headers
+  var headers = data[0];
+
+  // Batch size to group rows for GPT processing
+  var batchSize = 5;
+  var currentBatch = [];
+
+  // Loop through each data row (starting from row 2)
+  for (var i = 1; i < data.length; i++) {
+    var rowData = data[i];
+
+    // Push row data into a batch array
+    currentBatch.push({ headers: headers, data: rowData, index: i });
+
+    // Once the batch is filled or we're at the end, process with GPT
+    if (currentBatch.length === batchSize || i === data.length - 1) {
+      try {
+        // Get formatted content from GPT
+        var formattedContent = processWithGPT(model, currentBatch);
+        // Append GPT-styled content to the Doc
+        appendStyledContent(body, formattedContent, currentBatch);
+
+      } catch (error) {
+        // Log any GPT-related error and fallback to a simple styled row
+        Logger.log("Error with GPT processing: " + error);
+        currentBatch.forEach(row => {
+          appendStyledRow(body, row.headers, row.data, row.index);
+        });
+      }
+
+      // Reset batch and pause briefly to avoid hitting rate limits
+      currentBatch = [];
+      Utilities.sleep(2000);
+    }
+  }
+
+  // End of report separator
+  body.appendHorizontalRule();
+  var footer = body.appendParagraph("End of Report");
+  footer.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+        .setAttributes({
+          [DocumentApp.Attribute.FOREGROUND_COLOR]: '#7f8c8d',
+          [DocumentApp.Attribute.FONT_SIZE]: 10,
+          [DocumentApp.Attribute.ITALIC]: true
+        });
+
+  // Log the new document URL and show an alert in Sheets
+  Logger.log("Document created: " + doc.getUrl());
+  SpreadsheetApp.getUi().alert("Google Doc Created!\n" + doc.getUrl());
+}
+
+/***************************************************
+ * processWithGPT
+ * -----------------------------------------------
+ * Calls the OpenAI Chat Completion API with the 
+ * given batch of rows and returns formatted text.
+ *
+ * @param {string} model - The GPT model to use
+ * @param {Array} batch - Array of row data objects
+ * @return {string} formatted text returned by GPT
+ ***************************************************/
+function processWithGPT(model, batch) {
+  // Retrieve the hardcoded API key (again)
+  var apiKey = getApiKey();
+
+  // Throw an error if API key is missing
+  if (!apiKey) {
+    throw new Error("API Key is missing! Please add it to Script Properties or hardcode it properly.");
+  }
+
+  // Create a prompt that instructs GPT on how to format data
+  var prompt = "Format the following data into a professional report section:\n\n";
+
+  // Append row data to the prompt
+  batch.forEach(row => {
+    prompt += "Entry " + row.index + ":\n";
+    row.headers.forEach((header, idx) => {
+      prompt += `${header}: ${row.data[idx]}\n`;
+    });
+    prompt += "\n";
+  });
+
+  // Prepare the request payload
+  var payload = {
+    model: model,
+    messages: [
+      {
+        role: "system",
+        content: "You are a professional document formatter. Create clear sections with plain text only."
+      },
+      {
+        role: "user",
+        content: prompt
+      }
+    ],
+    max_tokens: 1000,
+    temperature: 0.3
+  };
+
+  // Configure the request options
+  var options = {
+    method: "post",
+    contentType: "application/json",
+    headers: {
+      Authorization: "Bearer " + apiKey
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  // Make the request to OpenAI's API
+  var response = UrlFetchApp.fetch("https://api.openai.com/v1/chat/completions", options);
+  var json = JSON.parse(response.getContentText());
+
+  // Check for API errors
+  if (json.error) {
+    throw new Error(json.error.message);
+  }
+
+  // Return the text portion of the GPT's response
+  return json.choices[0].message.content;
+}
+
+/***************************************************
+ * appendStyledContent
+ * -----------------------------------------------
+ * Takes the GPT-formatted text and appends it to 
+ * the Document body with styled headings and lists.
+ *
+ * @param {Body} body - The Document body element
+ * @param {string} content - GPT-formatted text
+ * @param {Array} batch - The current batch of row objects
+ ***************************************************/
+function appendStyledContent(body, content, batch) {
+  // Define color constants for styling
+  const COLORS = {
+    mainHeader: '#2c3e50',
+    subHeader: '#34495e',
+    text: '#2c3e50',
+    highlight: '#f5f6fa'
+  };
+
+  // Remove certain markdown/characters that might conflict with styling
+  content = content.replace(/[#\*\-\_\[\]]/g, '');
+
+  // Split GPT output into sections by double newlines
+  var sections = content.split("\n\n");
+
+  // Iterate over each section
+  sections.forEach((section, idx) => {
+    if (!section.trim()) return;
+
+    var lines = section.split("\n");
+
+    // First line in each section as a heading
+    if (lines[0]) {
+      let sectionTitle = body.appendParagraph(lines[0].trim());
+      sectionTitle.setHeading(DocumentApp.ParagraphHeading.HEADING1)
+                  .setAttributes({
+                    [DocumentApp.Attribute.FOREGROUND_COLOR]: COLORS.mainHeader,
+                    [DocumentApp.Attribute.FONT_SIZE]: 20,
+                    [DocumentApp.Attribute.BOLD]: true,
+                    [DocumentApp.Attribute.SPACING_BEFORE]: 24,
+                    [DocumentApp.Attribute.SPACING_AFTER]: 12
+                  });
+    }
+
+    // Remaining lines as bullet points
+    for (let i = 1; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+
+      let listItem = body.appendListItem(line);
+      listItem.setGlyphType(DocumentApp.GlyphType.BULLET)
+             .setAttributes({
+               [DocumentApp.Attribute.SPACING_AFTER]: 5,
+               [DocumentApp.Attribute.BACKGROUND_COLOR]: i % 2 === 0 ? COLORS.highlight : null,
+               [DocumentApp.Attribute.FOREGROUND_COLOR]: COLORS.text,
+               [DocumentApp.Attribute.FONT_SIZE]: 11
+             });
+    }
+  });
+
+  // Add spacing after each batch
+  body.appendParagraph("").setSpacingAfter(20);
+}
+
+/***************************************************
+ * appendStyledRow
+ * -----------------------------------------------
+ * If GPT processing fails, this function is used 
+ * to append each row individually with simpler 
+ * styling, rather than GPT formatting.
+ *
+ * @param {Body} body - The Document body element
+ * @param {Array} headers - The column headers
+ * @param {Array} rowData - The values for this row
+ * @param {number} rowIndex - The row index
+ ***************************************************/
+function appendStyledRow(body, headers, rowData, rowIndex) {
+  // Define color constants for styling
+  const COLORS = {
+    mainHeader: '#2c3e50',
+    text: '#2c3e50',
+    highlight: '#f5f6fa'
+  };
+
+  // Add a heading for the entry
+  let sectionTitle = body.appendParagraph("Entry " + rowIndex);
+  sectionTitle.setHeading(DocumentApp.ParagraphHeading.HEADING2)
+              .setAttributes({
+                [DocumentApp.Attribute.FOREGROUND_COLOR]: COLORS.mainHeader,
+                [DocumentApp.Attribute.FONT_SIZE]: 16,
+                [DocumentApp.Attribute.BOLD]: true,
+                [DocumentApp.Attribute.SPACING_BEFORE]: 20,
+                [DocumentApp.Attribute.SPACING_AFTER]: 10
+              });
+
+  // List each header-value pair as a bullet point
+  headers.forEach((header, index) => {
+    let value = rowData[index];
+    let listItem = body.appendListItem(`${header}: ${value}`);
+    listItem.setGlyphType(DocumentApp.GlyphType.BULLET)
+           .setAttributes({
+             [DocumentApp.Attribute.SPACING_AFTER]: 5,
+             [DocumentApp.Attribute.BACKGROUND_COLOR]: index % 2 === 0 ? COLORS.highlight : null,
+             [DocumentApp.Attribute.FOREGROUND_COLOR]: COLORS.text,
+             [DocumentApp.Attribute.FONT_SIZE]: 11
+           });
+  });
+
+  // Add spacing after each row
+  body.appendParagraph("").setSpacingAfter(20);
+}
