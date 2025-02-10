@@ -15,9 +15,9 @@ function getApiKey() {
  * onOpen
  * -----------------------------------------------
  * This function runs automatically when the 
- * spreadsheet is opened. It adds a custom menu to 
- * the Google Sheets UI, allowing users to run the 
- * "convertAnySheetToFormattedDoc" function.
+ * spreadsheet is opened. It adds a custom menu 
+ * to the Google Sheets UI, allowing users to run 
+ * the "convertAnySheetToFormattedDoc" function.
  ***************************************************/
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
@@ -31,7 +31,7 @@ function onOpen() {
  * -----------------------------------------------
  * Main function that reads data from the active 
  * sheet, creates a new Google Doc, formats the 
- * Doc's layout, and processes the rows (batched) 
+ * Doc's layout, and processes the rows (in batches) 
  * with GPT for styled output.
  ***************************************************/
 function convertAnySheetToFormattedDoc() {
@@ -167,7 +167,10 @@ function processWithGPT(model, batch) {
 
   // Append row data to the prompt
   batch.forEach(row => {
-    prompt += "Entry " + row.index + ":\n";
+    // Removed "Entry X" from the prompt
+    // If you prefer a simple label, you could do:
+    // prompt += "Employee Details:\n";
+    
     row.headers.forEach((header, idx) => {
       prompt += `${header}: ${row.data[idx]}\n`;
     });
@@ -211,7 +214,7 @@ function processWithGPT(model, batch) {
     throw new Error(json.error.message);
   }
 
-  // Return the text portion of the GPT's response
+  // Return the text portion of GPT's response
   return json.choices[0].message.content;
 }
 
@@ -299,8 +302,12 @@ function appendStyledRow(body, headers, rowData, rowIndex) {
     highlight: '#f5f6fa'
   };
 
-  // Add a heading for the entry
-  let sectionTitle = body.appendParagraph("Entry " + rowIndex);
+  // Instead of "Entry X", just create a heading or remove it entirely.
+  // For example:
+  // let sectionTitle = body.appendParagraph("");
+  // or:
+  let sectionTitle = body.appendParagraph("Row " + rowIndex);
+
   sectionTitle.setHeading(DocumentApp.ParagraphHeading.HEADING2)
               .setAttributes({
                 [DocumentApp.Attribute.FOREGROUND_COLOR]: COLORS.mainHeader,
